@@ -40,8 +40,9 @@ from .physics import (
 # --------------------------------------------------------------------------- #
 AREA_SIZE = 20_000.0        # metres, physical size of the square
 START_ALT = 10_000.0        # metres
-MAX_SPEED_KT = 100.0
-EDGE_TO_EDGE_AT_MAX = 5.0   # seconds to cross at 100 kt (display pacing)
+MAX_SPEED_KT = 500.0        # selectable maximum speed
+PACING_SPEED_KT = 100.0     # the speed whose edge-to-edge time is fixed
+EDGE_TO_EDGE_AT_PACING = 5.0  # seconds to cross at PACING_SPEED_KT (display pacing)
 
 CANVAS = 760                # px, the square flight area
 MARGIN = 24
@@ -66,6 +67,15 @@ TEXT = (210, 222, 235)
 MUTED = (130, 150, 170)
 GLYPH = (240, 246, 255)
 
+# 3D ancillary view
+V3D_BG = (16, 22, 33)
+V3D_GROUND = (40, 70, 60)
+V3D_GRID = (34, 50, 64)
+V3D_STALK = (90, 110, 135)
+V3D_SHADOW = (40, 52, 68)
+V3D_W = 280
+V3D_H = 244
+
 
 class UI(Enum):
     PICK_ENTRY = auto()
@@ -75,10 +85,10 @@ class UI(Enum):
     DONE = auto()
 
 
-# Time-compression so that 100 kt crosses the square in EDGE_TO_EDGE_AT_MAX s.
+# Time-compression so that PACING_SPEED_KT crosses the square in the pacing time.
 def _time_scale() -> float:
-    real_cross = AREA_SIZE / (MAX_SPEED_KT * KNOTS_TO_MS)
-    return real_cross / EDGE_TO_EDGE_AT_MAX
+    real_cross = AREA_SIZE / (PACING_SPEED_KT * KNOTS_TO_MS)
+    return real_cross / EDGE_TO_EDGE_AT_PACING
 
 
 class App:
@@ -91,6 +101,11 @@ class App:
         self.big = pygame.font.SysFont("consolas,menlo,monospace", 22, bold=True)
         self.scale = CANVAS / AREA_SIZE
         self.time_scale = _time_scale()
+        # ancillary 3D camera (orbit angles); rotated by dragging in its panel
+        self.cam_az = math.radians(-55.0)
+        self.cam_el = math.radians(24.0)
+        self.drag3d = False
+        self.last_drag: Optional[Tuple[int, int]] = None
         self.reset()
 
     # ------------------------------------------------------------------ #
@@ -100,7 +115,7 @@ class App:
         self.heading_deg: float = 0.0
         self.speed_kt: float = 0.0
         self.sim: Optional[Simulator] = None
-        self.trail: List[Tuple[float, float]] = []
+        self.trail: List[Tuple[float, float, float]] = []  # (x, y, altitude)
         self.poi: Optional[Tuple[float, float]] = None
         self.mouse = (0, 0)
 
@@ -178,7 +193,7 @@ class App:
             speed_knots=self.speed_kt, area_size=AREA_SIZE,
             start_altitude=START_ALT,
         )
-        self.trail = [self.entry]
+        self.trail = [(self.entry[0], self.entry[1], START_ALT)]
         self.mode = UI.FLYING
 
     def handle_key(self, key) -> None:
@@ -205,7 +220,7 @@ class App:
                 break
         st = self.sim.state
         if not self.trail or math.hypot(st.x - self.trail[-1][0], st.y - self.trail[-1][1]) > 30:
-            self.trail.append((st.x, st.y))
+            self.trail.append((st.x, st.y, st.z))
         if len(self.trail) > 4000:
             self.trail = self.trail[-4000:]
 
@@ -223,6 +238,7 @@ class App:
         elif self.mode in (UI.FLYING, UI.DONE):
             self._draw_flight()
         self._draw_panel()
+        self._draw_view3d()
         pygame.display.flip()
 
     def _draw_area(self) -> None:
@@ -260,7 +276,7 @@ class App:
         st = self.sim.state
         # trail
         if len(self.trail) > 1:
-            pts = [self.w2s(x, y) for x, y in self.trail]
+            pts = [self.w2s(p[0], p[1]) for p in self.trail]
             pygame.draw.lines(self.screen, TRAIL, False, pts, 2)
         # POI + holding circle
         if self.poi is not None:
@@ -328,6 +344,113 @@ class App:
         self._label(f"{st.z:6.0f} m", (x0 + w + 8, y0 + h - 14), TEXT)
         self._label(f"{START_ALT:6.0f} m", (x0 + w + 8, y0), MUTED)
 
+    # ------------------------------------------------------------------ #
+    # Ancillary 3D perspective view (orbit by dragging inside its panel)
+    # ------------------------------------------------------------------ #
+    def _view3d_rect(self) -> "pygame.Rect":
+        x = MARGIN + CANVAS + 20
+        y = WIN_H - MARGIN - V3D_H
+        return pygame.Rect(x, y, V3D_W, V3D_H)
+
+    def _rotate_cam(self, pos) -> None:
+        dx = pos[0] - self.last_drag[0]
+        dy = pos[1] - self.last_drag[1]
+        self.cam_az -= dx * 0.01
+        self.cam_el = max(math.radians(-10.0),
+                          min(math.radians(85.0), self.cam_el + dy * 0.01))
+        self.last_drag = pos
+
+    def _project3d(self, X, Y, Z, rect):
+        """Perspective-project a world point into the 3D viewport (or None)."""
+        cx = cy = AREA_SIZE * 0.5
+        cz = START_ALT * 0.5
+        dx, dy, dz = X - cx, Y - cy, Z - cz
+        ca, sa = math.cos(self.cam_az), math.sin(self.cam_az)
+        x1 = dx * ca - dy * sa
+        y1 = dx * sa + dy * ca
+        ce, se = math.cos(self.cam_el), math.sin(self.cam_el)
+        y2 = y1 * ce - dz * se
+        z2 = y1 * se + dz * ce
+        depth = y2 + AREA_SIZE * 2.4
+        if depth < 1e-3:
+            return None
+        f = V3D_W * 1.25
+        return (rect.centerx + f * x1 / depth, rect.centery - f * z2 / depth, depth)
+
+    def _seg3d(self, p1, p2, rect, col, w=1) -> None:
+        a = self._project3d(*p1, rect)
+        b = self._project3d(*p2, rect)
+        if a and b:
+            pygame.draw.line(self.screen, col, a[:2], b[:2], w)
+
+    def _draw_view3d(self) -> None:
+        rect = self._view3d_rect()
+        self._label("3D VIEW  (drag to rotate)", (rect.x, rect.y - 20), MUTED)
+        pygame.draw.rect(self.screen, V3D_BG, rect)
+        prev = self.screen.get_clip()
+        self.screen.set_clip(rect)
+        try:
+            self._draw_ground3d(rect)
+            if self.sim is not None:
+                self._draw_aircraft3d(rect)
+        finally:
+            self.screen.set_clip(prev)
+        pygame.draw.rect(self.screen, EDGE, rect, 1)
+
+    def _draw_ground3d(self, rect) -> None:
+        n = 4
+        step = AREA_SIZE / n
+        for i in range(n + 1):
+            self._seg3d((i * step, 0, 0), (i * step, AREA_SIZE, 0), rect, V3D_GRID)
+            self._seg3d((0, i * step, 0), (AREA_SIZE, i * step, 0), rect, V3D_GRID)
+        corners = [(0, 0, 0), (AREA_SIZE, 0, 0),
+                   (AREA_SIZE, AREA_SIZE, 0), (0, AREA_SIZE, 0)]
+        for i in range(4):
+            self._seg3d(corners[i], corners[(i + 1) % 4], rect, V3D_GROUND, 2)
+        if self.entry is not None:
+            e = self._project3d(self.entry[0], self.entry[1], 0, rect)
+            if e:
+                pygame.draw.circle(self.screen, ACCENT, (int(e[0]), int(e[1])), 3, 1)
+
+    def _draw_aircraft3d(self, rect) -> None:
+        st = self.sim.state
+        # POI on the ground and the holding circle at the current altitude
+        if self.poi is not None:
+            pg = self._project3d(self.poi[0], self.poi[1], 0, rect)
+            if pg:
+                pygame.draw.circle(self.screen, POI_COL, (int(pg[0]), int(pg[1])), 4)
+            r = self.sim.cfg.loiter_radius(st.v)
+            if r > 1 and st.phase in (Phase.DIVERT, Phase.LOITER, Phase.LANDING):
+                ring = []
+                for k in range(33):
+                    a = 2 * math.pi * k / 32
+                    p = self._project3d(self.poi[0] + r * math.cos(a),
+                                        self.poi[1] + r * math.sin(a), st.z, rect)
+                    if p:
+                        ring.append(p[:2])
+                if len(ring) > 1:
+                    pygame.draw.lines(self.screen, (120, 80, 95), True, ring, 1)
+        # 3D trail
+        if len(self.trail) > 1:
+            pts = [p[:2] for p in (self._project3d(x, y, z, rect)
+                                   for x, y, z in self.trail) if p]
+            if len(pts) > 1:
+                pygame.draw.lines(self.screen, TRAIL, False, pts, 1)
+        # altitude stalk + ground shadow
+        base = self._project3d(st.x, st.y, 0, rect)
+        top = self._project3d(st.x, st.y, st.z, rect)
+        if base and top:
+            pygame.draw.line(self.screen, V3D_STALK, base[:2], top[:2], 1)
+            pygame.draw.circle(self.screen, V3D_SHADOW, (int(base[0]), int(base[1])), 3)
+        # heading arrow + body
+        nose = self._project3d(st.x + math.cos(st.psi) * 1600.0,
+                               st.y + math.sin(st.psi) * 1600.0, st.z, rect)
+        if top and nose:
+            pygame.draw.line(self.screen, GLYPH, top[:2], nose[:2], 2)
+            self._arrowhead(top[:2], nose[:2], GLYPH)
+        if top:
+            pygame.draw.circle(self.screen, ACCENT, (int(top[0]), int(top[1])), 4)
+
     def _instructions(self) -> List[str]:
         if self.mode == UI.PICK_ENTRY:
             return ["1. Click a point on the", "   square's edge (entry)."]
@@ -371,8 +494,17 @@ class App:
                     running = False
                 elif ev.type == pygame.MOUSEMOTION:
                     self.mouse = ev.pos
+                    if self.drag3d and self.last_drag is not None:
+                        self._rotate_cam(ev.pos)
                 elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
-                    self.handle_click(ev.pos)
+                    if self._view3d_rect().collidepoint(ev.pos):
+                        self.drag3d = True       # rotate the ancillary 3D view
+                        self.last_drag = ev.pos
+                    else:
+                        self.handle_click(ev.pos)
+                elif ev.type == pygame.MOUSEBUTTONUP and ev.button == 1:
+                    self.drag3d = False
+                    self.last_drag = None
                 elif ev.type == pygame.KEYDOWN:
                     if ev.key == pygame.K_ESCAPE:
                         running = False

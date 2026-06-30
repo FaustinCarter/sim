@@ -239,6 +239,16 @@ def test_landing_altitude_monotonic():
 # --------------------------------------------------------------------------- #
 # Determinism
 # --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("speed", [150.0, 200.0, 300.0])
+def test_high_speed_capture_within_raised_limit(speed):
+    """Speeds above the old 100 kt cap still capture and respect the limits."""
+    f = run_flight(speed_kt=speed, heading_deg=20.0)
+    assert f.v.max() <= f.cfg.max_speed + 1e-9
+    assert speed * KNOTS_TO_MS <= f.cfg.max_speed + 1e-9
+    assert np.degrees(np.abs(f.phi)).max() <= 30.0 + 1e-6
+    assert f.loiter_index is not None
+
+
 def test_simulation_is_deterministic():
     a = run_flight(speed_kt=70.0, heading_deg=33.0, land=True)
     b = run_flight(speed_kt=70.0, heading_deg=33.0, land=True)

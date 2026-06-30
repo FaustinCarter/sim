@@ -34,7 +34,7 @@ The flight is set up with three mouse clicks, exactly as in the brief:
 2. **Move the mouse** to aim the entry heading — a live arrow and angle read-out
    track the mouse — and **click** to lock it.
 3. **Slide the mouse back and forth along that heading** to pick the speed
-   (0–100 kt, shown live) and **click** to launch.
+   (0–500 kt, shown live) and **click** to launch.
 
 While flying:
 
@@ -42,21 +42,28 @@ While flying:
   around it.
 * Press **L** to spiral down and land on the point of interest.
 * Press **S** to stop, **R** to reset, **Esc** to quit.
+* **Drag inside the 3-D view** (bottom-right, below the altitude bar) to orbit
+  the camera. It is an ancillary view only and never affects the simulation.
 
-At 100 kt the aircraft crosses the square edge-to-edge in 5 seconds; slower
-speeds are proportionally slower. The aircraft glyph is an asymmetric arrowhead
-so its heading is always obvious, and it tints toward red as it banks.
+At 100 kt the aircraft crosses the square edge-to-edge in 5 seconds; other
+speeds are proportionally faster/slower (the pacing stays pinned to 100 kt). The
+aircraft glyph is an asymmetric arrowhead so its heading is always obvious, and
+it tints toward red as it banks.
 
 ## Units and scale
 
-* Speed is in **knots**, altitude in **metres**, ground is at altitude 0, and
-  every flight starts at **10 000 m**.
+* Speed is in **knots** (selectable up to **500 kt**), altitude in **metres**,
+  ground is at altitude 0, and every flight starts at **10 000 m**.
 * The square represents a **20 km** physical area. This keeps the maneuvering
   realistic: a 100-kt aircraft limited to a 30° bank has a ~580 m holding
   radius, which comfortably fits inside the area. The on-screen pacing
   ("5 s edge-to-edge at 100 kt") is a display-time compression layered on top of
   the real-time physics, so the physics stays honest while the animation stays
   watchable.
+* Holding radius grows with the square of speed (`R = v²/(g·tan 25°)`), so at the
+  highest speeds the circle can be larger than the 20 km square and the aircraft
+  will loiter partly outside the visible area — a real consequence of the chosen
+  speed, not a bug.
 
 ## How the physics stays smooth
 

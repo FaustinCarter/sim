@@ -89,7 +89,7 @@ class Constraints:
     # Hard physical limits ------------------------------------------------- #
     max_bank: float = math.radians(30.0)          # rad, hard bank limit
     loiter_bank: float = math.radians(25.0)        # rad, steady holding bank
-    max_speed: float = 100.0 * KNOTS_TO_MS         # m/s
+    max_speed: float = 500.0 * KNOTS_TO_MS         # m/s
     max_linear_accel: float = 2.0                  # m/s^2 (~0.2 g)
     max_roll_rate: float = math.radians(20.0)      # rad/s, |d(phi)/dt| limit
     max_descent_rate: float = 30.0                 # m/s, vertical speed limit
